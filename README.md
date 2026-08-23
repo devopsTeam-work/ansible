@@ -1,6 +1,6 @@
 # Offline Ansible controller image
 
-This repository builds a general-purpose Ansible controller for disconnected
+This repository builds a general-purpose Ansible Execution Environment for disconnected
 on-prem environments. Internet or internal mirrors are needed **only while
 building**. Python packages and Galaxy collections are baked into the image, so
 the resulting image runs without internet access.
@@ -20,9 +20,9 @@ the resulting image runs without internet access.
 ## Build on a connected machine
 
 ```bash
-docker build -t ansible-controller:2.18 .
-docker run --rm ansible-controller:2.18 ansible --version
-docker run --rm ansible-controller:2.18 ansible-galaxy collection list
+docker build -t ansible-controller:2.18.8 .
+docker run --rm ansible-controller:2.18.8 ansible --version
+docker run --rm ansible-controller:2.18.8 ansible-galaxy collection list
 ```
 
 If your company mirrors images, PyPI, Debian, or Galaxy, point the Docker daemon
@@ -30,16 +30,16 @@ and build environment at those mirrors. Change `BASE_IMAGE` when the public base
 image is not allowed:
 
 ```bash
-docker build --build-arg BASE_IMAGE=registry.local/python:3.12-slim-bookworm \
-  -t registry.local/automation/ansible-controller:2.18 .
+docker build --build-arg BASE_IMAGE=registry.local/ansible/community-ee-minimal:2.18.8-1 \
+  -t registry.local/automation/ansible-controller:2.18.8 .
 ```
 
 ## Transfer into the disconnected environment
 
 ```bash
-docker save ansible-controller:2.18 | gzip > ansible-controller-2.18.tar.gz
+docker save ansible-controller:2.18.8 | gzip > ansible-controller-2.18.8.tar.gz
 # copy the archive through your approved transfer process
-gzip -dc ansible-controller-2.18.tar.gz | docker load
+gzip -dc ansible-controller-2.18.8.tar.gz | docker load
 ```
 
 ## Run playbooks
@@ -50,7 +50,7 @@ Linux/macOS host:
 docker run --rm -it \
   -v "$PWD:/work" \
   -v "$HOME/.ssh:/home/ansible/.ssh:ro" \
-  ansible-controller:2.18 \
+  ansible-controller:2.18.8 \
   ansible-playbook -i inventories/dev.yml playbooks/site.yml
 ```
 
@@ -60,7 +60,7 @@ PowerShell on Windows:
 docker run --rm -it `
   -v "${PWD}:/work" `
   -v "${HOME}/.ssh:/home/ansible/.ssh:ro" `
-  ansible-controller:2.18 `
+  ansible-controller:2.18.8 `
   ansible-playbook -i inventories/dev.yml playbooks/site.yml
 ```
 
