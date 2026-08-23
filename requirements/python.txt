@@ -2,7 +2,8 @@
 # Kubernetes, databases, DNS, Vault, parsing, and playbook validation.
 ansible-lint==25.1.3
 bcrypt==4.2.1
-cryptography==44.0.2
+# impacket 0.12.0 pins pyOpenSSL 24.0.0, which requires cryptography <43.
+cryptography==42.0.8
 dnspython==2.7.0
 docker==7.1.0
 gitpython==3.1.44
@@ -18,7 +19,9 @@ psycopg[binary]==3.2.6
 pymysql==1.1.1
 pypsrp==0.8.1
 pyvmomi==8.0.3.0.1
-pywinrm[credssp,kerberos]==0.5.0
+# NTLM and CredSSP cover password-based WinRM without compiling legacy
+# pykerberos. Kerberos can be added later as a separate, tested profile.
+pywinrm[credssp]==0.5.0
 requests==2.32.3
 requests-credssp==2.0.0
 requests-ntlm==1.3.0
