@@ -78,11 +78,13 @@ new pinned dependencies to the two requirement files and rebuild intentionally.
 The workflow in `.github/workflows/docker-image.yml` publishes the image when a
 tag matching `ansible_controller.v<major>.<minor>.<patch>` is pushed.
 
-Configure these under **GitHub repository > Settings > Secrets and variables >
+Configure this under **GitHub repository > Settings > Secrets and variables >
 Actions**:
 
-- Variable `DOCKERHUB_USERNAME`: Docker Hub account or organization name.
 - Secret `DOCKERHUB_TOKEN`: a Docker Hub access token with permission to push.
+
+The non-sensitive Docker Hub namespace `devopsteamelt` is defined directly in
+the workflow. Do not use the Docker Hub login email as an image namespace.
 
 Create and push a release tag:
 
@@ -91,5 +93,5 @@ git tag ansible_controller.v1.0.0
 git push origin ansible_controller.v1.0.0
 ```
 
-This publishes `DOCKERHUB_USERNAME/ansible-controller:v1.0.0`. The workflow does
+This publishes `devopsteamelt/ansible-controller:v1.0.0`. The workflow does
 not publish `latest`.
