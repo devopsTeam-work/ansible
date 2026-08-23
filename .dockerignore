@@ -1,0 +1,7 @@
+.git
+.gitignore
+*.log
+*.tar
+*.tar.gz
+playbooks/*
+!playbooks/.gitkeep

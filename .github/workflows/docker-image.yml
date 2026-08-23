@@ -1,0 +1,96 @@
+name: Ansible Controller Image CI
+
+# Builds and publishes this repository's Ansible controller image.
+#
+# Supported Git tag format:
+#   ansible_controller.v<major>.<minor>.<patch>
+#
+# Example:
+#   ansible_controller.v1.0.0
+#     -> <DOCKERHUB_USERNAME>/ansible-controller:v1.0.0
+#
+# Required repository configuration:
+#   Variable: DOCKERHUB_USERNAME
+#   Secret:   DOCKERHUB_TOKEN
+#
+# Only the version from the pushed Git tag is published. No `latest` tag is
+# created, which keeps disconnected-environment deployments reproducible.
+
+on:
+  push:
+    tags:
+      - "ansible_controller.v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-push:
+    name: Build and push Ansible controller
+    runs-on: ubuntu-latest
+
+    steps:
+      # Download the exact commit referenced by the pushed tag.
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Accept only a complete semantic version and retain its `v` prefix for
+      # the Docker image tag. This rejects accidental tags such as `.vtest`.
+      - name: Parse and validate Git tag
+        id: image
+        shell: bash
+        env:
+          GIT_TAG: ${{ github.ref_name }}
+          DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+        run: |
+          set -euo pipefail
+
+          readonly tag_pattern='^ansible_controller\.(v[0-9]+\.[0-9]+\.[0-9]+)$'
+
+          if [[ ! "${GIT_TAG}" =~ ${tag_pattern} ]]; then
+            echo "ERROR: Unsupported Git tag: ${GIT_TAG}" >&2
+            echo "Expected: ansible_controller.v1.2.3" >&2
+            exit 1
+          fi
+
+          if [[ -z "${DOCKERHUB_USERNAME}" ]]; then
+            echo "ERROR: Repository variable DOCKERHUB_USERNAME is not set." >&2
+            exit 1
+          fi
+
+          readonly image_tag="${BASH_REMATCH[1]}"
+          readonly image_name="${DOCKERHUB_USERNAME}/ansible-controller:${image_tag}"
+
+          echo "tag=${image_tag}" >> "${GITHUB_OUTPUT}"
+          echo "name=${image_name}" >> "${GITHUB_OUTPUT}"
+          echo "Publishing ${image_name}"
+
+      # BuildKit provides reliable caching, provenance, and modern Docker build
+      # behavior on the GitHub-hosted runner.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Use a Docker Hub access token, not the account password.
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Build from this repository's root Dockerfile and push only the immutable
+      # version tag. GitHub Actions cache speeds up later image builds.
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.image.outputs.name }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: mode=max
+          sbom: true
+
+      - name: Show published image
+        shell: bash
+        run: echo "Successfully pushed ${{ steps.image.outputs.name }}"
