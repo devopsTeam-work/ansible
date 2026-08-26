@@ -13,16 +13,14 @@ ENV ANSIBLE_CONFIG=/etc/ansible/ansible.cfg \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-COPY requirements/python.txt /tmp/python.txt
 COPY requirements/galaxy.yml /tmp/galaxy.yml
 COPY config/ansible.cfg /etc/ansible/ansible.cfg
 
-# Install only controller tools needed for SSH, Kerberos, SMB/PsExec, Git, and
-# file transfer. Python and Galaxy dependencies are baked in for offline use.
+# Install only controller tools needed for SSH, Kerberos, SMB, Git, and file
+# transfer. Python packages are intentionally not installed in this image.
 USER root
 RUN dnf install -y --setopt=install_weak_deps=False \
        ca-certificates git krb5-workstation openssh-clients rsync samba-client sshpass \
-    && python3 -m pip install --no-cache-dir -r /tmp/python.txt \
     && ansible-galaxy collection install -r /tmp/galaxy.yml -p /usr/share/ansible/collections \
     && (id ansible >/dev/null 2>&1 || useradd --create-home --uid 1001 --shell /bin/bash ansible) \
     && mkdir -p /work /tmp/ansible-local/cp /tmp/ansible-remote /home/ansible/.ssh \
@@ -31,7 +29,7 @@ RUN dnf install -y --setopt=install_weak_deps=False \
     && chmod 0700 /home/ansible/.ssh \
     && chmod 0600 /home/ansible/.ssh/known_hosts \
     && dnf clean all \
-    && rm -rf /var/cache/dnf /root/.cache /tmp/python.txt /tmp/galaxy.yml
+    && rm -rf /var/cache/dnf /root/.cache /tmp/galaxy.yml
 
 # Mount inventories, roles, playbooks, and runtime credentials below /work.
 # Running as a non-root user reduces the impact of a compromised playbook.
