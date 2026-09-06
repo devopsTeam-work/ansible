@@ -1,0 +1,176 @@
+name: Migrate all Docker Hub images
+
+# Temporary, manually triggered migration from the existing Docker Hub
+# namespace to the new one. The source is accessed read-only.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: List everything that would be copied without pushing
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dockerhub-namespace-migration
+  cancel-in-progress: false
+
+env:
+  SOURCE_NAMESPACE: devopsteamelt
+  TARGET_NAMESPACE: devopsteamwork
+
+jobs:
+  migrate:
+    name: Copy every repository and tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Validate immutable migration settings
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${SOURCE_NAMESPACE}" != "devopsteamelt" ]]; then
+            echo "ERROR: Unexpected source namespace: ${SOURCE_NAMESPACE}" >&2
+            exit 1
+          fi
+          if [[ "${TARGET_NAMESPACE}" != "devopsteamwork" ]]; then
+            echo "ERROR: Unexpected target namespace: ${TARGET_NAMESPACE}" >&2
+            exit 1
+          fi
+          if [[ "${SOURCE_NAMESPACE}" == "${TARGET_NAMESPACE}" ]]; then
+            echo "ERROR: Source and target namespaces must differ." >&2
+            exit 1
+          fi
+
+      - name: Install registry copy tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes skopeo
+
+      - name: Log in to the source Docker Hub account
+        shell: bash
+        env:
+          DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_PASSWORD}" ]]; then
+            echo "ERROR: Repository secret DOCKERHUB_TOKEN is empty." >&2
+            exit 1
+          fi
+
+          mkdir -p "${RUNNER_TEMP}/dockerhub-migration"
+          printf '%s' "${DOCKERHUB_PASSWORD}" | skopeo login \
+            --authfile "${RUNNER_TEMP}/dockerhub-migration/source-auth.json" \
+            --username "${SOURCE_NAMESPACE}" \
+            --password-stdin docker.io
+
+      - name: Log in to the destination Docker Hub account
+        if: ${{ !inputs.dry_run }}
+        shell: bash
+        env:
+          DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${DOCKERHUB_PASSWORD}" | skopeo login \
+            --authfile "${RUNNER_TEMP}/dockerhub-migration/target-auth.json" \
+            --username "${TARGET_NAMESPACE}" \
+            --password-stdin docker.io
+
+      - name: Discover and copy all repositories and tags
+        shell: bash
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          readonly api_root="https://hub.docker.com/v2"
+          readonly source_auth="${RUNNER_TEMP}/dockerhub-migration/source-auth.json"
+          readonly target_auth="${RUNNER_TEMP}/dockerhub-migration/target-auth.json"
+
+          # Docker Hub's API token is used only to enumerate repositories and
+          # tags, including private ones. It is masked before any later output.
+          api_token="$(
+            jq -nc \
+              --arg username "${SOURCE_NAMESPACE}" \
+              --arg password "${DOCKERHUB_PASSWORD}" \
+              '{username: $username, password: $password}' |
+              curl --fail --silent --show-error --location \
+                --retry 5 --retry-all-errors \
+                --header 'Content-Type: application/json' \
+                --data-binary @- "${api_root}/users/login" |
+              jq -er '.token'
+          )"
+          echo "::add-mask::${api_token}"
+
+          hub_api_get() {
+            curl --fail --silent --show-error --location \
+              --retry 5 --retry-all-errors \
+              --header "Authorization: JWT ${api_token}" "$1"
+          }
+
+          repo_url="${api_root}/repositories/${SOURCE_NAMESPACE}/?page_size=100"
+          repository_count=0
+          tag_count=0
+
+          while [[ -n "${repo_url}" && "${repo_url}" != "null" ]]; do
+            repo_page="$(hub_api_get "${repo_url}")"
+
+            mapfile -t repositories < <(
+              jq -r '.results[].name' <<<"${repo_page}"
+            )
+
+            for repository in "${repositories[@]}"; do
+              ((repository_count += 1))
+              tag_url="${api_root}/repositories/${SOURCE_NAMESPACE}/${repository}/tags/?page_size=100"
+
+              while [[ -n "${tag_url}" && "${tag_url}" != "null" ]]; do
+                tag_page="$(hub_api_get "${tag_url}")"
+
+                mapfile -t tags < <(jq -r '.results[].name' <<<"${tag_page}")
+                for tag in "${tags[@]}"; do
+                  ((tag_count += 1))
+                  source_image="docker.io/${SOURCE_NAMESPACE}/${repository}:${tag}"
+                  target_image="docker.io/${TARGET_NAMESPACE}/${repository}:${tag}"
+
+                  if [[ "${DRY_RUN}" == "true" ]]; then
+                    echo "DRY RUN: ${source_image} -> ${target_image}"
+                  else
+                    echo "Copying ${source_image} -> ${target_image}"
+                    # --all preserves every platform in a multi-arch image.
+                    # Separate auth files enforce the direction of access.
+                    skopeo copy --all --retry-times 5 \
+                      --src-authfile "${source_auth}" \
+                      --dest-authfile "${target_auth}" \
+                      "docker://${source_image}" "docker://${target_image}"
+                  fi
+                done
+
+                tag_url="$(jq -r '.next // empty' <<<"${tag_page}")"
+              done
+            done
+
+            repo_url="$(jq -r '.next // empty' <<<"${repo_page}")"
+          done
+
+          if (( repository_count == 0 )); then
+            echo "ERROR: Docker Hub returned no repositories for ${SOURCE_NAMESPACE}." >&2
+            exit 1
+          fi
+
+          echo "Processed ${repository_count} repositories and ${tag_count} tags."
+          if [[ "${DRY_RUN}" == "true" ]]; then
+            echo "No images were pushed because dry_run was enabled."
+          fi
+
+      - name: Remove temporary Docker Hub credentials
+        if: ${{ always() }}
+        shell: bash
+        run: rm -f "${RUNNER_TEMP}/dockerhub-migration/source-auth.json" "${RUNNER_TEMP}/dockerhub-migration/target-auth.json"
